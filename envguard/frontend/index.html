@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Env-Guard | Smart Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-green-400 font-mono min-h-screen p-4 md:p-10">
+    <div class="max-w-5xl mx-auto border border-green-800 rounded-lg p-6 bg-gray-900 shadow-[0_0_15px_rgba(0,255,0,0.1)]">
+        <h1 class="text-3xl font-bold mb-2">🛡️ Env-Guard Scanner</h1>
+        <p class="text-gray-400 mb-8">Compare local `.env` secrets against a local blueprint OR let Discovery Mode hunt it down via a GitHub repo link.</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
+            
+            <div class="flex flex-col border-2 border-gray-700 rounded p-4 bg-gray-950">
+                <h2 class="text-gray-300 font-bold mb-4 text-center">1. The Blueprint (.env.example)</h2>
+                
+                <input type="text" id="githubUrl" placeholder="Paste repo link (e.g., https://github.com/user/repo)" class="w-full p-3 bg-black border border-gray-700 text-blue-400 rounded focus:border-blue-500 outline-none text-sm placeholder-gray-700 mb-4" />
+                
+                <div class="flex items-center justify-center mb-4">
+                    <span class="text-gray-600 text-sm font-bold bg-gray-950 px-2">OR</span>
+                </div>
+
+                <label id="templateBox" class="border-2 border-dashed border-gray-600 p-4 text-center rounded hover:border-blue-500 transition cursor-pointer flex flex-col items-center justify-center flex-grow">
+                    <input type="file" id="templateFile" class="hidden" accept=".example,.env,text/plain" />
+                    <span id="templateText" class="text-gray-400 text-sm">Upload local blueprint</span>
+                </label>
+            </div>
+
+            <div class="flex flex-col border-2 border-gray-700 rounded p-4 bg-gray-950">
+                <h2 class="text-gray-300 font-bold mb-4 text-center">2. Actual Secrets (.env)</h2>
+                
+                <label class="border-2 border-dashed border-gray-600 p-8 text-center rounded hover:border-green-500 transition cursor-pointer flex flex-col items-center justify-center flex-grow">
+                    <input type="file" id="envFile" class="hidden" accept=".env,text/plain" />
+                    <span class="text-4xl mb-4">🔒</span>
+                    <span id="envText" class="text-gray-400 text-sm">Upload local `.env` file<br>(Processed entirely in-memory)</span>
+                </label>
+            </div>
+        </div>
+
+        <button id="scanBtn" disabled class="w-full bg-gray-800 text-gray-500 font-bold py-4 rounded cursor-not-allowed transition duration-300">
+            🚀 SCAN ENVIRONMENT
+        </button>
+
+        <div id="resultsArea" class="mt-8 hidden">
+            <h2 class="text-xl mb-4 text-white">System Status: <span id="statusBadge"></span></h2>
+            <div class="bg-black p-4 rounded border border-gray-800">
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="text-gray-500 border-b border-gray-800">
+                            <th class="pb-2 pl-2">Environment Variable</th>
+                            <th class="pb-2">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let templateFile = null;
+        let envFile = null;
+
+        const githubUrlInput = document.getElementById('githubUrl');
+        const templateInput = document.getElementById('templateFile');
+        const envInput = document.getElementById('envFile');
+        const scanBtn = document.getElementById('scanBtn');
+        const templateBox = document.getElementById('templateBox');
+        const templateText = document.getElementById('templateText');
+
+        function checkInputs() {
+            // Blueprint is valid if EITHER the URL is filled OR a file is uploaded
+            const hasBlueprint = githubUrlInput.value.trim() !== "" || templateFile !== null;
+            const hasSecrets = envFile !== null;
+
+            if (hasBlueprint && hasSecrets) {
+                scanBtn.disabled = false;
+                scanBtn.classList.remove('bg-gray-800', 'text-gray-500', 'cursor-not-allowed');
+                scanBtn.classList.add('bg-green-600', 'text-white', 'hover:bg-green-500', 'cursor-pointer', 'shadow-[0_0_10px_rgba(0,255,0,0.5)]');
+            } else {
+                scanBtn.disabled = true;
+                scanBtn.classList.add('bg-gray-800', 'text-gray-500', 'cursor-not-allowed');
+                scanBtn.classList.remove('bg-green-600', 'text-white', 'hover:bg-green-500', 'cursor-pointer', 'shadow-[0_0_10px_rgba(0,255,0,0.5)]');
+            }
+        }
+
+        // If they type a URL, clear the file upload to prevent confusion
+        githubUrlInput.addEventListener('input', () => {
+            if (githubUrlInput.value.trim() !== "") {
+                templateFile = null;
+                templateInput.value = "";
+                templateText.innerHTML = "Upload local blueprint";
+                templateBox.classList.remove('border-blue-500');
+            }
+            checkInputs();
+        });
+
+        // If they upload a file, clear the URL input to prevent confusion
+        templateInput.addEventListener('change', (e) => {
+            if(e.target.files[0]) {
+                templateFile = e.target.files[0];
+                githubUrlInput.value = ""; 
+                templateText.innerHTML = `<span class="text-blue-400 font-bold">✅ ${templateFile.name}</span>`;
+                templateBox.classList.add('border-blue-500');
+                checkInputs();
+            }
+        });
+
+        envInput.addEventListener('change', (e) => {
+            if(e.target.files[0]) {
+                envFile = e.target.files[0];
+                document.getElementById('envText').innerHTML = `<span class="text-green-400 font-bold">✅ ${envFile.name}</span>`;
+                checkInputs();
+            }
+        });
+
+        scanBtn.addEventListener('click', async () => {
+            scanBtn.innerText = "Scanning Environment...";
+            
+            const formData = new FormData();
+            formData.append("env_file", envFile);
+            
+            // Append either the URL or the File based on what the user provided
+            if (githubUrlInput.value.trim() !== "") {
+                formData.append("github_url", githubUrlInput.value.trim());
+            } else if (templateFile) {
+                formData.append("template_file", templateFile);
+            }
+
+            try {
+                const response = await fetch("http://localhost:8000/api/scan", { 
+                    method: "POST", 
+                    body: formData 
+                });
+                
+                const data = await response.json();
+
+                if (!response.ok) {
+                    alert("Error: " + data.detail);
+                    scanBtn.innerText = "🚀 SCAN ENVIRONMENT";
+                    return;
+                }
+                
+                document.getElementById('resultsArea').classList.remove('hidden');
+                
+                const badge = document.getElementById('statusBadge');
+                if (data.is_deployable) {
+                    badge.innerHTML = '<span class="text-green-500 font-bold bg-green-900/30 px-2 py-1 rounded">READY FOR DEPLOY</span>';
+                } else {
+                    badge.innerHTML = '<span class="text-red-500 font-bold bg-red-900/30 px-2 py-1 rounded">DEPLOYMENT BLOCKED (' + data.missing_count + ' missing)</span>';
+                }
+
+                const tbody = document.getElementById('resultsTableBody');
+                tbody.innerHTML = '';
+                data.scan_results.forEach(item => {
+                    tbody.innerHTML += `
+                        <tr class="border-b border-gray-900 hover:bg-gray-900 transition">
+                            <td class="py-3 text-gray-300 font-semibold pl-2">${item.key}</td>
+                            <td class="py-3 ${item.color}">${item.status}</td>
+                        </tr>
+                    `;
+                });
+            } catch (error) {
+                console.error("API Error", error);
+                alert("Error connecting to backend.");
+            }
+            scanBtn.innerText = "🚀 SCAN ENVIRONMENT";
+        });
+    </script>
+</body>
+</html>
